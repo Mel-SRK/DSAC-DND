@@ -1,4 +1,5 @@
 #include "dungeon.h"
+#include "save.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -12,25 +13,12 @@
 #include <windows.h>
 #endif
 
-typedef struct {
-    bool cleared;
-    bool chest_opened;
-} RoomState;
-
 typedef enum {
     GAME_QUIT,
     GAME_VICTORY,
     GAME_DEFEAT,
     GAME_ERROR
 } GameResult;
-
-enum { BESTIARY_CAPACITY = 32 };
-
-/* 只记录战斗里真正遇到过的怪物，按首次出现的顺序排列。 */
-typedef struct {
-    const Character *entries[BESTIARY_CAPACITY];
-    size_t count;
-} Bestiary;
 
 /*
  * Windows 控制台默认使用本地代码页（简体中文是 936），而源码里的中文是 UTF-8。
@@ -42,6 +30,64 @@ static void console_init(void)
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
 #endif
+}
+
+static size_t console_width(void)
+{
+#ifdef _WIN32
+    CONSOLE_SCREEN_BUFFER_INFO info;
+    if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info)) {
+        int width = info.srWindow.Right - info.srWindow.Left + 1;
+        if (width > 0) {
+            return (size_t)width;
+        }
+    }
+#endif
+    return 80;
+}
+
+/* 中文在终端里占两列，这里按 UTF-8 字节粗略估算显示宽度。 */
+static size_t display_width(const char *text)
+{
+    size_t width = 0;
+    const unsigned char *cursor = (const unsigned char *)text;
+    while (*cursor != '\0') {
+        unsigned char byte = *cursor;
+        if (byte < 0x80) {
+            width += 1;
+            cursor += 1;
+        } else if ((byte >> 5) == 0x6) {
+            width += 1;
+            cursor += 2;
+        } else if ((byte >> 4) == 0xE) {
+            width += 2;
+            cursor += 3;
+        } else {
+            width += 2;
+            cursor += 4;
+        }
+    }
+    return width;
+}
+
+static void print_centered(const char *text, size_t width)
+{
+    size_t text_width = display_width(text);
+    size_t padding = text_width < width ? (width - text_width) / 2 : 0;
+    for (size_t index = 0; index < padding; ++index) {
+        putchar(' ');
+    }
+    puts(text);
+}
+
+static void print_right(const char *text, size_t width)
+{
+    size_t text_width = display_width(text);
+    size_t padding = text_width < width ? width - text_width : 0;
+    for (size_t index = 0; index < padding; ++index) {
+        putchar(' ');
+    }
+    puts(text);
 }
 
 static int read_choice(const char *prompt, int minimum, int maximum, int default_choice)
@@ -84,24 +130,6 @@ static int read_choice(const char *prompt, int minimum, int maximum, int default
     }
 }
 
-static int choose_attack_target(const Combat *combat)
-{
-    puts("可攻击的目标");
-    for (size_t index = 0; index < combat->monster_count; ++index) {
-        const Character *monster = &combat->monsters[index];
-        if (monster->hp > 0) {
-            printf("  %zu. %s（生命 %d）\n", index + 1, monster->name, monster->hp);
-        }
-    }
-    for (;;) {
-        int choice = read_choice("攻击目标 > ", 1, (int)combat->monster_count, -1);
-        if (choice < 0 || combat->monsters[choice - 1].hp > 0) {
-            return choice;
-        }
-        puts("该目标已经倒地，请重新选择。");
-    }
-}
-
 static void bestiary_record(Bestiary *bestiary, const Character *monster)
 {
     if (bestiary->count >= BESTIARY_CAPACITY) {
@@ -135,13 +163,62 @@ static void show_party_stats(const Party *party)
 
 static void show_bestiary(const Bestiary *bestiary)
 {
-    if (bestiary->count == 0) {
+    if (bestiary == NULL || bestiary->count == 0) {
         puts("[怪物图鉴] 还没有遇到过任何怪物。");
         return;
     }
     printf("[怪物图鉴] 已记录 %zu 种\n", bestiary->count);
     for (size_t index = 0; index < bestiary->count; ++index) {
         print_character_stats(bestiary->entries[index]);
+    }
+}
+
+static void print_loot_entry(const char *label, const LootItem *item)
+{
+    printf("[%s] %s（价值 %d）\n", label, item->name, item->value);
+}
+
+static bool collect_reward(LootLedger *ledger, const DungeonArea *area)
+{
+    size_t first = ledger->count;
+    if (!loot_collect(ledger, area->loot, area->loot_count)) {
+        fputs("战利品记录容量不足。\n", stderr);
+        return false;
+    }
+    for (size_t index = first; index < ledger->count; ++index) {
+        print_loot_entry("获得", &ledger->items[index]);
+    }
+    return true;
+}
+
+static void show_room(const DungeonRoom *room, const Party *party)
+{
+    printf("\n[地点] 第 %d 层 · %s\n", room->floor_number, room->name);
+    fputs("小队生命", stdout);
+    for (size_t index = 0; index < PARTY_SIZE; ++index) {
+        printf("  %s %d", party->members[index].name, party->members[index].hp);
+    }
+    putchar('\n');
+    for (size_t index = 0; index < room->area_count; ++index) {
+        printf("  区域：%s\n", room->areas[index].name);
+    }
+}
+
+static int choose_attack_target(const Combat *combat)
+{
+    puts("可攻击的目标");
+    for (size_t index = 0; index < combat->monster_count; ++index) {
+        const Character *monster = &combat->monsters[index];
+        if (monster->hp > 0) {
+            printf("  %zu. %s（生命 %d）\n", index + 1, monster->name, monster->hp);
+        }
+    }
+    for (;;) {
+        int choice = read_choice("攻击目标 > ", 1, (int)combat->monster_count, -1);
+        if (choice < 0 || combat->monsters[choice - 1].hp > 0) {
+            return choice;
+        }
+        puts("该目标已经倒地，请重新选择。");
     }
 }
 
@@ -205,66 +282,38 @@ static CombatResult run_battle(Party *party, const DungeonArea *area, uint32_t *
     return result;
 }
 
-static void print_loot_entry(const char *label, const LootEntry *entry, const Party *party)
+static GameResult explore(GameState *game, uint32_t *random_state)
 {
-    const char *owner = "小队仓库";
-    if (entry->owner < PARTY_SIZE) {
-        owner = party->members[entry->owner].name;
-    }
-    printf("[%s] %s | 价值 %d | %s\n", label, entry->item.name, entry->item.value, owner);
-}
-
-static bool collect_reward(LootLedger *ledger, const DungeonArea *area, const Party *party)
-{
-    size_t first = ledger->count;
-    if (!loot_collect(ledger, area->loot, area->loot_count)) {
-        fputs("战利品记录容量不足。\n", stderr);
-        return false;
-    }
-    for (size_t index = first; index < ledger->count; ++index) {
-        print_loot_entry("获得", &ledger->entries[index], party);
-    }
-    return true;
-}
-
-static void show_room(const DungeonRoom *room, const Party *party)
-{
-    printf("\n[地点] 第 %d 层 · %s\n", room->floor_number, room->name);
-    fputs("小队生命", stdout);
-    for (size_t index = 0; index < PARTY_SIZE; ++index) {
-        printf("  %s %d", party->members[index].name, party->members[index].hp);
-    }
-    putchar('\n');
-    for (size_t index = 0; index < room->area_count; ++index) {
-        printf("  区域：%s\n", room->areas[index].name);
-    }
-}
-
-static GameResult explore(const Dungeon *map, Party *party, LootLedger *ledger,
-                          uint32_t *random_state, Bestiary *bestiary)
-{
-    RoomState rooms[ROOM_COUNT] = {0};
-    const DungeonRoom *room = &map->floors[0].rooms[0];
     for (;;) {
-        RoomState *state = &rooms[room->id];
+        const DungeonRoom *room = dungeon_room(game->room_id);
+        RoomState *state = &game->rooms[room->id];
+        game->floor_number = room->floor_number;
+        if (room->floor_number > game->max_floor) {
+            game->max_floor = room->floor_number;
+        }
+
         const DungeonArea *chest = NULL;
-        show_room(room, party);
+        show_room(room, &game->party);
         for (size_t index = 0; index < room->area_count; ++index) {
             const DungeonArea *area = &room->areas[index];
             if (area->kind == AREA_ENCOUNTER && !state->cleared) {
-                CombatResult result = run_battle(party, area, random_state, bestiary);
+                CombatResult result = run_battle(&game->party, area, random_state,
+                                                 &game->bestiary);
                 if (result == COMBAT_ACTIVE) {
+                    save_write(game);
                     return GAME_QUIT;
                 }
                 if (result == COMBAT_DEFEAT) {
+                    save_clear();
                     return GAME_DEFEAT;
                 }
                 state->cleared = true;
                 printf("[清理] %s\n", room->name);
-                if (!collect_reward(ledger, area, party)) {
+                if (!collect_reward(&game->ledger, area)) {
                     return GAME_ERROR;
                 }
                 if (room->id == ROOM_BOSS) {
+                    save_clear();
                     return GAME_VICTORY;
                 }
             }
@@ -292,40 +341,67 @@ static GameResult explore(const Dungeon *map, Party *party, LootLedger *ledger,
         puts("  0. 退出探险");
         int choice = read_choice("探索操作 > ", 0, choice_count, -1);
         if (choice <= 0) {
+            save_write(game);
             return GAME_QUIT;
         }
         putchar('\n');
         if (chest != NULL && choice == chest_choice) {
-            if (!collect_reward(ledger, chest, party)) {
+            if (!collect_reward(&game->ledger, chest)) {
                 return GAME_ERROR;
             }
             state->chest_opened = true;
         } else if (choice == party_choice) {
             putchar('\n');
-            show_party_stats(party);
+            show_party_stats(&game->party);
         } else if (choice == bestiary_choice) {
             putchar('\n');
-            show_bestiary(bestiary);
+            show_bestiary(&game->bestiary);
         } else {
-            room = exits->rooms[choice - 1];
+            game->room_id = exits->rooms[choice - 1]->id;
         }
+        save_write(game);
     }
 }
 
-static void show_summary(LootLedger *ledger, const Party *party, GameResult result)
+static void show_summary(LootLedger *ledger, GameResult result)
 {
     puts(result == GAME_VICTORY ? "\n[结果] 通关" : "\n[结果] 全员倒地");
     puts("[战利品结算]");
     loot_sort_for_summary(ledger);
     for (size_t index = 0; index < ledger->count; ++index) {
-        print_loot_entry("结算", &ledger->entries[index], party);
+        print_loot_entry("结算", &ledger->items[index]);
     }
     printf("[总价值] %d\n", ledger->total);
-    if (ledger->mode != LOOT_SHARED) {
-        for (size_t index = 0; index < PARTY_SIZE; ++index) {
-            printf("[个人收益] %s %d\n", party->members[index].name, ledger->member_totals[index]);
-        }
-    }
+}
+
+static void new_game(GameState *game)
+{
+    memset(game, 0, sizeof(*game));
+    party_init(&game->party);
+    loot_init(&game->ledger, dungeon_loot_capacity(dungeon_map()));
+    game->room_id = ROOM_ENTRY;
+    game->floor_number = 1;
+    game->max_floor = 1;
+    save_write(game);
+}
+
+static void draw_title(bool has_save, int floor_number, int max_floor)
+{
+    size_t width = console_width();
+    putchar('\n');
+    print_centered("DND 地下城探险", width);
+    print_centered("（标题占位）", width);
+    putchar('\n');
+    print_centered("1. 开始", width);
+    print_centered("2. 继续", width);
+    print_centered("3. 人物属性", width);
+    print_centered("4. 怪物图鉴", width);
+    print_centered("0. 退出", width);
+    putchar('\n');
+    char status[128];
+    snprintf(status, sizeof(status), "当前层数：%d   最远层数：%d",
+             has_save ? floor_number : 0, has_save ? max_floor : 0);
+    print_right(status, width);
 }
 
 static bool parse_seed(const char *text, uint32_t *seed)
@@ -357,36 +433,66 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    printf("DND 地下城探险游戏\n[随机种子] %" PRIu32 "\n", seed);
-    puts("战利品分配方式\n  1. 队伍共有（默认）\n  2. 单场均衡\n  3. 累计均衡");
-    int mode = read_choice("选择分配方式 > ", LOOT_SHARED, LOOT_BALANCED_RUN, LOOT_SHARED);
-    if (mode < 0) {
-        return EXIT_SUCCESS;
-    }
-
     Party party;
     if (!party_init(&party)) {
         fputs("角色属性超出 0-99 的范围。\n", stderr);
         return EXIT_FAILURE;
     }
-    const Dungeon *map = dungeon_map();
-    if (!dungeon_validate(map)) {
+    if (!dungeon_validate(dungeon_map())) {
         fputs("地下城里的怪物属性超出 0-99 的范围。\n", stderr);
         return EXIT_FAILURE;
     }
-    LootLedger ledger;
-    if (!loot_init(&ledger, (LootMode)mode, dungeon_loot_capacity(map))) {
-        fputs("无法分配战利品记录所需的内存。\n", stderr);
-        return EXIT_FAILURE;
-    }
 
-    Bestiary bestiary = {0};
-    GameResult result = explore(map, &party, &ledger, &seed, &bestiary);
-    if (result == GAME_VICTORY || result == GAME_DEFEAT) {
-        show_summary(&ledger, &party, result);
-    } else if (result == GAME_QUIT) {
-        puts("\n[结果] 已退出探险");
+    for (;;) {
+        GameState saved;
+        bool has_save = save_read(&saved);
+        draw_title(has_save, has_save ? saved.floor_number : 0,
+                   has_save ? saved.max_floor : 0);
+        int choice = read_choice("请选择 > ", 0, 4, -1);
+        if (choice <= 0) {
+            if (has_save) {
+                loot_destroy(&saved.ledger);
+            }
+            break;
+        }
+        if (choice == 3) {
+            show_party_stats(&party);
+            if (has_save) {
+                loot_destroy(&saved.ledger);
+            }
+            continue;
+        }
+        if (choice == 4) {
+            show_bestiary(has_save ? &saved.bestiary : NULL);
+            if (has_save) {
+                loot_destroy(&saved.ledger);
+            }
+            continue;
+        }
+        if (choice == 2 && !has_save) {
+            puts("没有可以继续的存档。");
+            continue;
+        }
+
+        GameState game;
+        if (choice == 2) {
+            game = saved;
+        } else {
+            if (has_save) {
+                loot_destroy(&saved.ledger);
+            }
+            new_game(&game);
+        }
+        GameResult result = explore(&game, &seed);
+        if (result == GAME_VICTORY || result == GAME_DEFEAT) {
+            show_summary(&game.ledger, result);
+        } else if (result == GAME_QUIT) {
+            puts("\n[结果] 已退出探险");
+        }
+        loot_destroy(&game.ledger);
+        if (result == GAME_ERROR) {
+            return EXIT_FAILURE;
+        }
     }
-    loot_destroy(&ledger);
-    return result == GAME_ERROR ? EXIT_FAILURE : EXIT_SUCCESS;
+    return EXIT_SUCCESS;
 }

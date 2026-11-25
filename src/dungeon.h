@@ -56,7 +56,10 @@ typedef struct {
 } DungeonLinks;
 
 const Dungeon *dungeon_map(void);
+const DungeonRoom *dungeon_room(size_t room_id);
 const DungeonLinks *dungeon_links(const DungeonRoom *room);
+const LootItem *dungeon_find_loot(const char *name);
+const Character *dungeon_find_monster(const char *name);
 size_t dungeon_loot_capacity(const Dungeon *dungeon);
 bool dungeon_validate(const Dungeon *dungeon);
 

@@ -1,5 +1,7 @@
 #include "dungeon.h"
 
+#include <string.h>
+
 #define ARRAY_LENGTH(array) (sizeof(array) / sizeof((array)[0]))
 
 static const Character guard_monsters[] = {
@@ -145,6 +147,63 @@ const Dungeon *dungeon_map(void)
 const DungeonLinks *dungeon_links(const DungeonRoom *room)
 {
     return &links[room->id];
+}
+
+const DungeonRoom *dungeon_room(size_t room_id)
+{
+    const Dungeon *map = dungeon_map();
+    for (size_t floor_index = 0; floor_index < map->floor_count; ++floor_index) {
+        const DungeonFloor *floor = &map->floors[floor_index];
+        for (size_t room_index = 0; room_index < floor->room_count; ++room_index) {
+            if (floor->rooms[room_index].id == room_id) {
+                return &floor->rooms[room_index];
+            }
+        }
+    }
+    return &map->floors[0].rooms[0];
+}
+
+const LootItem *dungeon_find_loot(const char *name)
+{
+    const Dungeon *map = dungeon_map();
+    for (size_t floor_index = 0; floor_index < map->floor_count; ++floor_index) {
+        const DungeonFloor *floor = &map->floors[floor_index];
+        for (size_t room_index = 0; room_index < floor->room_count; ++room_index) {
+            const DungeonRoom *room = &floor->rooms[room_index];
+            for (size_t area_index = 0; area_index < room->area_count; ++area_index) {
+                const DungeonArea *area = &room->areas[area_index];
+                for (size_t loot_index = 0; loot_index < area->loot_count; ++loot_index) {
+                    if (strcmp(area->loot[loot_index].name, name) == 0) {
+                        return &area->loot[loot_index];
+                    }
+                }
+            }
+        }
+    }
+    return NULL;
+}
+
+const Character *dungeon_find_monster(const char *name)
+{
+    const Dungeon *map = dungeon_map();
+    for (size_t floor_index = 0; floor_index < map->floor_count; ++floor_index) {
+        const DungeonFloor *floor = &map->floors[floor_index];
+        for (size_t room_index = 0; room_index < floor->room_count; ++room_index) {
+            const DungeonRoom *room = &floor->rooms[room_index];
+            for (size_t area_index = 0; area_index < room->area_count; ++area_index) {
+                const DungeonArea *area = &room->areas[area_index];
+                for (size_t monster_index = 0;
+                     monster_index < area->encounter.count;
+                     ++monster_index) {
+                    const Character *monster = &area->encounter.monsters[monster_index];
+                    if (strcmp(monster->name, name) == 0) {
+                        return monster;
+                    }
+                }
+            }
+        }
+    }
+    return NULL;
 }
 
 bool dungeon_validate(const Dungeon *map)
