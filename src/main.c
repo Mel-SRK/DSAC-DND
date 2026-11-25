@@ -8,6 +8,10 @@
 #include <string.h>
 #include <time.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 typedef struct {
     bool cleared;
     bool chest_opened;
@@ -19,6 +23,18 @@ typedef enum {
     GAME_DEFEAT,
     GAME_ERROR
 } GameResult;
+
+/*
+ * Windows 控制台默认使用本地代码页（简体中文是 936），而源码里的中文是 UTF-8。
+ * 这里主动把控制台切成 UTF-8，避免直接双击或从 cmd 启动时显示乱码。
+ */
+static void console_init(void)
+{
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+#endif
+}
 
 static int read_choice(const char *prompt, int minimum, int maximum, int default_choice)
 {
@@ -262,6 +278,7 @@ static bool parse_seed(const char *text, uint32_t *seed)
 
 int main(int argc, char *argv[])
 {
+    console_init();
     uint32_t seed = (uint32_t)time(NULL);
     if (argc == 2 && strcmp(argv[1], "--help") == 0) {
         puts("用法：dnd [--seed 0-4294967295]");
