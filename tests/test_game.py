@@ -90,19 +90,19 @@ class GameTests(unittest.TestCase):
         self.assertIn("力量 9  速度 6  魔力 2  幸运 30  声望 10", stats)
         self.assertIn("[怪物图鉴] 还没有遇到过任何怪物。", stats)
 
-        # 打完守卫室后，图鉴只记录这一场遇到过的两种怪物。
-        bestiary = self.run_game(["1"] + ROUTE[:13] + ["5", "0"])
+        # 打完守卫室后，从「设置」进入图鉴，只记录这一场遇到过的两种怪物。
+        bestiary = self.run_game(["1"] + ROUTE[:13] + ["4", "2", "3", "0"])
         self.assertIn("[怪物图鉴] 已记录 2 种", bestiary)
         self.assertIn("哥布林守卫｜普通攻击 打击", bestiary)
         self.assertIn("洞穴蝠｜普通攻击 斩击", bestiary)
         self.assertNotIn("地牢领主", bestiary)
 
     def test_quit_then_continue_restores_progress(self):
-        first = self.run_game(["1", "0", "0"])
+        first = self.run_game(["1", "2", "3", "0"])
         self.assertIn("[结果] 已退出探险", first)
         self.assertTrue(SAVE.exists())
 
-        resumed = self.run_game(["2", "0", "0"], keep_save=True)
+        resumed = self.run_game(["2", "2", "3", "0"], keep_save=True)
         self.assertIn("当前层数：1   最远层数：1", resumed)
         self.assertIn("[地点] 第 1 层 · 入口", resumed)
         self.assertIn("小队生命  战士 28  游侠 23  法师 20", resumed)

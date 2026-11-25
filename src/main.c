@@ -282,6 +282,30 @@ static CombatResult run_battle(Party *party, const DungeonArea *area, uint32_t *
     return result;
 }
 
+/* 设置菜单：属性、图鉴、退出探险都收在这里。返回 true 表示要退出本次探险。 */
+static bool run_settings(GameState *game)
+{
+    for (;;) {
+        puts("\n[设置]");
+        puts("  1. 人物属性");
+        puts("  2. 怪物图鉴");
+        puts("  3. 退出探险");
+        puts("  0. 返回");
+        int choice = read_choice("设置 > ", 0, 3, -1);
+        if (choice < 0 || choice == 3) {
+            return true;
+        }
+        if (choice == 0) {
+            return false;
+        }
+        if (choice == 1) {
+            show_party_stats(&game->party);
+        } else {
+            show_bestiary(&game->bestiary);
+        }
+    }
+}
+
 static GameResult explore(GameState *game, uint32_t *random_state)
 {
     for (;;) {
@@ -334,13 +358,10 @@ static GameResult explore(GameState *game, uint32_t *random_state)
             chest_choice = ++choice_count;
             printf("  %d. 打开宝箱\n", chest_choice);
         }
-        int party_choice = ++choice_count;
-        printf("  %d. 查看人物属性\n", party_choice);
-        int bestiary_choice = ++choice_count;
-        printf("  %d. 怪物图鉴\n", bestiary_choice);
-        puts("  0. 退出探险");
-        int choice = read_choice("探索操作 > ", 0, choice_count, -1);
-        if (choice <= 0) {
+        int settings_choice = ++choice_count;
+        printf("  %d. 设置\n", settings_choice);
+        int choice = read_choice("探索操作 > ", 1, choice_count, -1);
+        if (choice < 0) {
             save_write(game);
             return GAME_QUIT;
         }
@@ -350,12 +371,11 @@ static GameResult explore(GameState *game, uint32_t *random_state)
                 return GAME_ERROR;
             }
             state->chest_opened = true;
-        } else if (choice == party_choice) {
-            putchar('\n');
-            show_party_stats(&game->party);
-        } else if (choice == bestiary_choice) {
-            putchar('\n');
-            show_bestiary(&game->bestiary);
+        } else if (choice == settings_choice) {
+            if (run_settings(game)) {
+                save_write(game);
+                return GAME_QUIT;
+            }
         } else {
             game->room_id = exits->rooms[choice - 1]->id;
         }
