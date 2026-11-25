@@ -267,7 +267,7 @@ static CombatResult run_battle(Party *party, const DungeonArea *area, uint32_t *
         }
         Character *target = combat_actor(&combat, target_id);
         AttackResult attack = combat_attack(&combat, target_id);
-        printf("\n%s对%s造成了%d点伤害（%s），%s当前剩余血量：%d。\n",
+        printf("\n\n%s对%s造成了%d点伤害（%s），%s当前剩余血量：%d。\n",
                actor->name, target->name, attack.damage,
                damage_type_text(attack.type), target->name, target->hp);
         if (attack.recoil > 0) {
@@ -278,6 +278,7 @@ static CombatResult run_battle(Party *party, const DungeonArea *area, uint32_t *
             printf("%s被%s的魔抗反弹，受到%d点法术伤害，%s当前剩余血量：%d。\n",
                    actor->name, target->name, attack.reflected, actor->name, actor->hp);
         }
+        putchar('\n');
     }
     return result;
 }
