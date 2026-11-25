@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -88,6 +89,16 @@ static void print_right(const char *text, size_t width)
         putchar(' ');
     }
     puts(text);
+}
+
+/* 编号选项前后各留一个空行，便于和普通输出区分。 */
+static void print_option(const char *format, ...)
+{
+    putchar('\n');
+    va_list args;
+    va_start(args, format);
+    vprintf(format, args);
+    va_end(args);
 }
 
 static int read_choice(const char *prompt, int minimum, int maximum, int default_choice)
@@ -210,9 +221,10 @@ static int choose_attack_target(const Combat *combat)
     for (size_t index = 0; index < combat->monster_count; ++index) {
         const Character *monster = &combat->monsters[index];
         if (monster->hp > 0) {
-            printf("  %zu. %s（生命 %d）\n", index + 1, monster->name, monster->hp);
+            print_option("  %zu. %s（生命 %d）\n", index + 1, monster->name, monster->hp);
         }
     }
+    putchar('\n');
     for (;;) {
         int choice = read_choice("攻击目标 > ", 1, (int)combat->monster_count, -1);
         if (choice < 0 || combat->monsters[choice - 1].hp > 0) {
@@ -246,8 +258,9 @@ static CombatResult run_battle(Party *party, const DungeonArea *area, uint32_t *
         if (actor_id < PARTY_SIZE) {
             printf("轮到%s行动。\n", actor->name);
             for (;;) {
-                puts("  1. 普通攻击");
-                puts("  2. 法术");
+                print_option("  1. 普通攻击\n");
+                print_option("  2. 法术\n");
+                putchar('\n');
                 int action = read_choice("行动方式 > ", 1, 2, -1);
                 if (action < 0) {
                     return COMBAT_ACTIVE;
@@ -288,10 +301,11 @@ static bool run_settings(GameState *game)
 {
     for (;;) {
         puts("\n[设置]");
-        puts("  1. 人物属性");
-        puts("  2. 怪物图鉴");
-        puts("  3. 退出探险");
-        puts("  0. 返回");
+        print_option("  1. 人物属性\n");
+        print_option("  2. 怪物图鉴\n");
+        print_option("  3. 退出探险\n");
+        print_option("  0. 返回\n");
+        putchar('\n');
         int choice = read_choice("设置 > ", 0, 3, -1);
         if (choice < 0 || choice == 3) {
             return true;
@@ -350,17 +364,18 @@ static GameResult explore(GameState *game, uint32_t *random_state)
         const DungeonLinks *exits = dungeon_links(room);
         for (size_t index = 0; index < exits->count; ++index) {
             const DungeonRoom *destination = exits->rooms[index];
-            printf("  %zu. 前往第 %d 层 · %s\n",
-                   index + 1, destination->floor_number, destination->name);
+            print_option("  %zu. 前往第 %d 层 · %s\n",
+                         index + 1, destination->floor_number, destination->name);
         }
         int choice_count = (int)exits->count;
         int chest_choice = 0;
         if (chest != NULL) {
             chest_choice = ++choice_count;
-            printf("  %d. 打开宝箱\n", chest_choice);
+            print_option("  %d. 打开宝箱\n", chest_choice);
         }
         int settings_choice = ++choice_count;
-        printf("  %d. 设置\n", settings_choice);
+        print_option("  %d. 设置\n", settings_choice);
+        putchar('\n');
         int choice = read_choice("探索操作 > ", 1, choice_count, -1);
         if (choice < 0) {
             save_write(game);
@@ -413,12 +428,13 @@ static void draw_title(bool has_save, int floor_number, int max_floor)
     print_centered("DND 地下城探险", width);
     print_centered("（标题占位）", width);
     putchar('\n');
-    print_centered("1. 开始", width);
-    print_centered("2. 继续", width);
-    print_centered("3. 人物属性", width);
-    print_centered("4. 怪物图鉴", width);
-    print_centered("0. 退出", width);
-    putchar('\n');
+    static const char *const items[] = {
+        "1. 开始", "2. 继续", "3. 人物属性", "4. 怪物图鉴", "0. 退出"
+    };
+    for (size_t index = 0; index < sizeof(items) / sizeof(items[0]); ++index) {
+        print_centered(items[index], width);
+        putchar('\n');
+    }
     char status[128];
     snprintf(status, sizeof(status), "当前层数：%d   最远层数：%d",
              has_save ? floor_number : 0, has_save ? max_floor : 0);
