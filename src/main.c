@@ -24,6 +24,14 @@ typedef enum {
     GAME_ERROR
 } GameResult;
 
+enum { BESTIARY_CAPACITY = 32 };
+
+/* 只记录战斗里真正遇到过的怪物，按首次出现的顺序排列。 */
+typedef struct {
+    const Character *entries[BESTIARY_CAPACITY];
+    size_t count;
+} Bestiary;
+
 /*
  * Windows 控制台默认使用本地代码页（简体中文是 936），而源码里的中文是 UTF-8。
  * 这里主动把控制台切成 UTF-8，避免直接双击或从 cmd 启动时显示乱码。
@@ -94,9 +102,56 @@ static int choose_attack_target(const Combat *combat)
     }
 }
 
-static CombatResult run_battle(Party *party, const DungeonArea *area, uint32_t *random_state)
+static void bestiary_record(Bestiary *bestiary, const Character *monster)
+{
+    if (bestiary->count >= BESTIARY_CAPACITY) {
+        return;
+    }
+    for (size_t index = 0; index < bestiary->count; ++index) {
+        if (strcmp(bestiary->entries[index]->name, monster->name) == 0) {
+            return;
+        }
+    }
+    bestiary->entries[bestiary->count++] = monster;
+}
+
+static void print_character_stats(const Character *character)
+{
+    printf("  %s｜普通攻击 %s\n", character->name, damage_type_text(character->damage_type));
+    printf("    生命 %d  SP %d  防御 %d  魔抗 %d\n",
+           character->hp, character->sp, character->defense, character->magic_resist);
+    printf("    力量 %d  速度 %d  魔力 %d  幸运 %d  声望 %d\n",
+           character->strength, character->speed, character->magic,
+           character->luck, character->reputation);
+}
+
+static void show_party_stats(const Party *party)
+{
+    puts("[人物属性]");
+    for (size_t index = 0; index < PARTY_SIZE; ++index) {
+        print_character_stats(&party->members[index]);
+    }
+}
+
+static void show_bestiary(const Bestiary *bestiary)
+{
+    if (bestiary->count == 0) {
+        puts("[怪物图鉴] 还没有遇到过任何怪物。");
+        return;
+    }
+    printf("[怪物图鉴] 已记录 %zu 种\n", bestiary->count);
+    for (size_t index = 0; index < bestiary->count; ++index) {
+        print_character_stats(bestiary->entries[index]);
+    }
+}
+
+static CombatResult run_battle(Party *party, const DungeonArea *area, uint32_t *random_state,
+                               Bestiary *bestiary)
 {
     Combat combat;
+    for (size_t index = 0; index < area->encounter.count; ++index) {
+        bestiary_record(bestiary, &area->encounter.monsters[index]);
+    }
     combat_start(&combat, party, &area->encounter, random_state);
     printf("[开战] %s\n", area->name);
     fputs("[先攻]", stdout);
@@ -186,7 +241,7 @@ static void show_room(const DungeonRoom *room, const Party *party)
 }
 
 static GameResult explore(const Dungeon *map, Party *party, LootLedger *ledger,
-                          uint32_t *random_state)
+                          uint32_t *random_state, Bestiary *bestiary)
 {
     RoomState rooms[ROOM_COUNT] = {0};
     const DungeonRoom *room = &map->floors[0].rooms[0];
@@ -197,7 +252,7 @@ static GameResult explore(const Dungeon *map, Party *party, LootLedger *ledger,
         for (size_t index = 0; index < room->area_count; ++index) {
             const DungeonArea *area = &room->areas[index];
             if (area->kind == AREA_ENCOUNTER && !state->cleared) {
-                CombatResult result = run_battle(party, area, random_state);
+                CombatResult result = run_battle(party, area, random_state, bestiary);
                 if (result == COMBAT_ACTIVE) {
                     return GAME_QUIT;
                 }
@@ -225,20 +280,32 @@ static GameResult explore(const Dungeon *map, Party *party, LootLedger *ledger,
                    index + 1, destination->floor_number, destination->name);
         }
         int choice_count = (int)exits->count;
+        int chest_choice = 0;
         if (chest != NULL) {
-            printf("  %d. 打开宝箱\n", ++choice_count);
+            chest_choice = ++choice_count;
+            printf("  %d. 打开宝箱\n", chest_choice);
         }
+        int party_choice = ++choice_count;
+        printf("  %d. 查看人物属性\n", party_choice);
+        int bestiary_choice = ++choice_count;
+        printf("  %d. 怪物图鉴\n", bestiary_choice);
         puts("  0. 退出探险");
         int choice = read_choice("探索操作 > ", 0, choice_count, -1);
         if (choice <= 0) {
             return GAME_QUIT;
         }
         putchar('\n');
-        if (chest != NULL && choice == choice_count) {
+        if (chest != NULL && choice == chest_choice) {
             if (!collect_reward(ledger, chest, party)) {
                 return GAME_ERROR;
             }
             state->chest_opened = true;
+        } else if (choice == party_choice) {
+            putchar('\n');
+            show_party_stats(party);
+        } else if (choice == bestiary_choice) {
+            putchar('\n');
+            show_bestiary(bestiary);
         } else {
             room = exits->rooms[choice - 1];
         }
@@ -313,7 +380,8 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    GameResult result = explore(map, &party, &ledger, &seed);
+    Bestiary bestiary = {0};
+    GameResult result = explore(map, &party, &ledger, &seed, &bestiary);
     if (result == GAME_VICTORY || result == GAME_DEFEAT) {
         show_summary(&ledger, &party, result);
     } else if (result == GAME_QUIT) {

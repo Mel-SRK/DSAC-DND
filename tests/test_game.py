@@ -99,6 +99,21 @@ class GameTests(unittest.TestCase):
         self.assertIn("[攻击] 游侠 → 洞穴蝠（斩击），伤害 7，剩余生命 0", output)
         self.assertIn("[结果] 已退出探险", output)
 
+    def test_party_stats_and_bestiary(self):
+        stats = self.run_game(["", "2", "3", "0"])
+        self.assertIn("[人物属性]", stats)
+        self.assertIn("战士｜普通攻击 打击", stats)
+        self.assertIn("法师｜普通攻击 斩击", stats)
+        self.assertIn("力量 9  速度 6  魔力 2  幸运 30  声望 10", stats)
+        self.assertIn("[怪物图鉴] 还没有遇到过任何怪物。", stats)
+
+        # 打完守卫室后，图鉴只记录这一场遇到过的两种怪物。
+        bestiary = self.run_game([""] + ROUTE[:13] + ["5", "0"])
+        self.assertIn("[怪物图鉴] 已记录 2 种", bestiary)
+        self.assertIn("哥布林守卫｜普通攻击 打击", bestiary)
+        self.assertIn("洞穴蝠｜普通攻击 斩击", bestiary)
+        self.assertNotIn("地牢领主", bestiary)
+
     def test_eof_during_battle_exits(self):
         output = self.run_game(["1", "1"])
         self.assertIn("[开战] 守卫哨岗", output)
