@@ -91,10 +91,9 @@ static void print_right(const char *text, size_t width)
     puts(text);
 }
 
-/* 编号选项前后各留一个空行，便于和普通输出区分。 */
+/* 编号选项逐行打印，整个选项块的上下由调用方各留一个空行。 */
 static void print_option(const char *format, ...)
 {
-    putchar('\n');
     va_list args;
     va_start(args, format);
     vprintf(format, args);
@@ -258,6 +257,7 @@ static CombatResult run_battle(Party *party, const DungeonArea *area, uint32_t *
         if (actor_id < PARTY_SIZE) {
             printf("轮到%s行动。\n", actor->name);
             for (;;) {
+                putchar('\n');
                 print_option("  1. 普通攻击\n");
                 print_option("  2. 法术\n");
                 putchar('\n');
@@ -362,6 +362,7 @@ static GameResult explore(GameState *game, uint32_t *random_state)
         }
 
         const DungeonLinks *exits = dungeon_links(room);
+        putchar('\n');
         for (size_t index = 0; index < exits->count; ++index) {
             const DungeonRoom *destination = exits->rooms[index];
             print_option("  %zu. 前往第 %d 层 · %s\n",
@@ -433,8 +434,8 @@ static void draw_title(bool has_save, int floor_number, int max_floor)
     };
     for (size_t index = 0; index < sizeof(items) / sizeof(items[0]); ++index) {
         print_centered(items[index], width);
-        putchar('\n');
     }
+    putchar('\n');
     char status[128];
     snprintf(status, sizeof(status), "当前层数：%d   最远层数：%d",
              has_save ? floor_number : 0, has_save ? max_floor : 0);
