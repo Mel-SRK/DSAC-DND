@@ -267,16 +267,16 @@ static CombatResult run_battle(Party *party, const DungeonArea *area, uint32_t *
         }
         Character *target = combat_actor(&combat, target_id);
         AttackResult attack = combat_attack(&combat, target_id);
-        printf("\n[攻击] %s → %s（%s），伤害 %d，剩余生命 %d\n",
-               actor->name, target->name, damage_type_text(attack.type),
-               attack.damage, target->hp);
+        printf("\n%s对%s造成了%d点伤害（%s），%s当前剩余血量：%d。\n",
+               actor->name, target->name, attack.damage,
+               damage_type_text(attack.type), target->name, target->hp);
         if (attack.recoil > 0) {
-            printf("[反噬] %s 受到 %d 点伤害，剩余生命 %d\n",
-                   actor->name, attack.recoil, actor->hp);
+            printf("%s被%s的防御反噬，受到%d点伤害，%s当前剩余血量：%d。\n",
+                   actor->name, target->name, attack.recoil, actor->name, actor->hp);
         }
         if (attack.reflected > 0) {
-            printf("[反弹] %s 受到 %d 点法术伤害，剩余生命 %d\n",
-                   actor->name, attack.reflected, actor->hp);
+            printf("%s被%s的魔抗反弹，受到%d点法术伤害，%s当前剩余血量：%d。\n",
+                   actor->name, target->name, attack.reflected, actor->name, actor->hp);
         }
     }
     return result;

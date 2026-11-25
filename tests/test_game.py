@@ -63,7 +63,7 @@ class GameTests(unittest.TestCase):
             "战士(速度 6) 哥布林守卫(速度 4)",
             output,
         )
-        self.assertRegex(output, r"\[攻击\] 法师 → 哥布林守卫（斩击|打击），伤害 0")
+        self.assertRegex(output, r"法师对哥布林守卫造成了0点伤害（斩击|打击）")
 
         # 战利品一律进入小队仓库，不再有个人分配。
         items = self.summary_items(output)
@@ -113,7 +113,7 @@ class GameTests(unittest.TestCase):
         self.assertIn("暂时没有可用的技能。", output)
         self.assertIn("请输入有效编号。", output)
         self.assertIn("输入过长，请重新输入编号。", output)
-        self.assertIn("[攻击] 游侠 → 洞穴蝠（斩击），伤害 7，剩余生命 0", output)
+        self.assertIn("游侠对洞穴蝠造成了7点伤害（斩击），洞穴蝠当前剩余血量：0。", output)
         self.assertIn("[结果] 已退出探险", output)
 
     def test_eof_during_battle_exits(self):
