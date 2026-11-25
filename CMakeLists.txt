@@ -6,6 +6,7 @@ add_executable(dnd
     src/dungeon.c
     src/combat.c
     src/loot.c
+    src/party.c
 )
 set_target_properties(dnd PROPERTIES
     C_STANDARD 17

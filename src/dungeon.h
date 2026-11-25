@@ -1,6 +1,8 @@
 #ifndef DND_DUNGEON_H
 #define DND_DUNGEON_H
 
+#include <stdbool.h>
+
 #include "combat.h"
 #include "loot.h"
 
@@ -56,5 +58,6 @@ typedef struct {
 const Dungeon *dungeon_map(void);
 const DungeonLinks *dungeon_links(const DungeonRoom *room);
 size_t dungeon_loot_capacity(const Dungeon *dungeon);
+bool dungeon_validate(const Dungeon *dungeon);
 
 #endif

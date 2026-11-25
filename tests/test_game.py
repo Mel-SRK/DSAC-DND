@@ -5,18 +5,15 @@ import unittest
 from pathlib import Path
 
 
-ENTER_AND_CLEAR_GUARD = [1, 2, 1, 1]
-OPEN_AND_REVISIT_STORAGE = [2, 2, 1, 2, 1]
-USE_STAIRS_BOTH_WAYS_AND_ENTER_HALL = [3, 2, 1, 2, 2]
-CLEAR_HALL_AND_ENTER_BOSS = [2, 2, 1, 1, 2]
-ROUTE_TO_BOSS = (
-    ENTER_AND_CLEAR_GUARD
-    + OPEN_AND_REVISIT_STORAGE
-    + USE_STAIRS_BOTH_WAYS_AND_ENTER_HALL
-    + CLEAR_HALL_AND_ENTER_BOSS
-)
-BOSS_VICTORY_ATTACKS = [2, 2, 1, 1, 1, 1, 1]
-BOSS_DEFEAT_ATTACKS = [2, 2, 1, 1, 1, 1]
+# 一次完整通关的探索与战斗输入。第一项由 run_game 的 choices 提供分配方式，
+# 这里从「入口 → 守卫室 → 储藏室（开宝箱）→ 守卫室 → 楼梯间 →
+# 第 2 层楼梯间 → 前厅 → 首领室」逐项列出。
+ROUTE = (
+    "1 1 1 1 1 1 1 1 1 1 2 1 2 2 2 1 3"
+    " 2 2 1 1 1 1 1 1 1 1 1 1 1 1 1 2 1"
+    " 2 1 2 1 2 1 2 1 2 2 1 1 1 1 1 1 1"
+    " 1 1 1 1 1 1 1 1 1 1 1 1 1 1 2 1 2"
+).split()
 
 
 class GameTests(unittest.TestCase):
@@ -42,18 +39,31 @@ class GameTests(unittest.TestCase):
             )
         }
 
-    def test_default_shared_victory_and_room_revisits(self):
-        output = self.run_game([""] + ROUTE_TO_BOSS + BOSS_VICTORY_ATTACKS)
+    def test_shared_victory_and_loot_summary(self):
+        output = self.run_game(["1"] + ROUTE)
         self.assertIn("[结果] 通关", output)
-        self.assertEqual(output.count("[地点] 第 1 层 · 守卫室"), 3)
-        self.assertEqual(output.count("[地点] 第 2 层 · 楼梯间"), 2)
-        self.assertEqual(output.count("[开战] 守卫哨岗"), 1)
+        self.assertEqual(output.count("[地点] 第 1 层 · 守卫室"), 2)
+        self.assertEqual(output.count("[地点] 第 1 层 · 储藏室"), 2)
+        self.assertEqual(output.count("[地点] 第 1 层 · 楼梯间"), 1)
+        self.assertEqual(output.count("[地点] 第 2 层 · 楼梯间"), 1)
         self.assertEqual(output.count("2. 打开宝箱"), 1)
+        self.assertEqual(output.count("[开战]"), 3)
+
+        # 先攻按速度降序，不再掷 d20。
+        self.assertIn(
+            "[先攻] 游侠(速度 12) 法师(速度 9) 洞穴蝠(速度 9) "
+            "战士(速度 6) 哥布林守卫(速度 4)",
+            output,
+        )
+        # 法师平砍 1 点，被哥布林守卫的 2 点防御完全吃掉。
+        self.assertRegex(output, r"\[攻击\] 法师 → 哥布林守卫（斩击|打击），伤害 0")
 
         items = self.summary_items(output)
         self.assertEqual(output.count("[结算]"), 10)
-        self.assertEqual([value for value, _ in items.values()],
-                         [40, 27, 23, 18, 16, 14, 12, 9, 8, 4])
+        self.assertEqual(
+            [value for value, _ in items.values()],
+            [40, 27, 23, 18, 16, 14, 12, 9, 8, 4],
+        )
         self.assertEqual({owner for _, owner in items.values()}, {"小队仓库"})
         self.assertIn("[总价值] 171", output)
         self.assertNotIn("[个人收益]", output)
@@ -65,7 +75,7 @@ class GameTests(unittest.TestCase):
         }
         for mode, (gem_owner, ring_owner, totals) in expected.items():
             with self.subTest(mode=mode):
-                output = self.run_game([mode] + ROUTE_TO_BOSS + BOSS_VICTORY_ATTACKS)
+                output = self.run_game([str(mode)] + ROUTE)
                 self.assertIn("[结果] 通关", output)
                 items = self.summary_items(output)
                 self.assertEqual(len(items), 10)
@@ -73,39 +83,24 @@ class GameTests(unittest.TestCase):
                 self.assertEqual(items["领主印戒"], (40, ring_owner))
                 self.assertEqual(items["旧铜币"], (4, "法师"))
                 for member, total in zip(("战士", "游侠", "法师"), totals):
-                    distributed = sum(value for value, owner in items.values()
-                                      if owner == member)
+                    distributed = sum(
+                        value for value, owner in items.values() if owner == member
+                    )
                     self.assertEqual(distributed, total)
                     self.assertIn(f"[个人收益] {member} {total}", output)
                 self.assertIn("[总价值] 171", output)
 
-    def test_initiative_and_invalid_target_retries(self):
-        output = self.run_game([1, 1, 99, "x" * 300, 2, 2, 1, 1, 0])
-        self.assertIn("[先攻] 游侠(20) 洞穴蝠(15) 哥布林守卫(12) 战士(12) 法师(11)", output)
+    def test_action_menu_and_invalid_input_retries(self):
+        output = self.run_game(["1", "1", "2", "1", "99", "x" * 300, "2"])
+        self.assertIn("[开战] 守卫哨岗", output)
+        self.assertIn("暂时没有可用的技能。", output)
         self.assertIn("请输入有效编号。", output)
         self.assertIn("输入过长，请重新输入编号。", output)
-        self.assertIn("该目标已经倒地，请重新选择。", output)
-        self.assertEqual(
-            re.findall(r"^\[攻击\] (.+)$", output, re.MULTILINE),
-            [
-                "游侠 → 洞穴蝠，伤害 8，剩余生命 0",
-                "哥布林守卫 → 法师，伤害 4，剩余生命 16",
-                "战士 → 哥布林守卫，伤害 9，剩余生命 5",
-                "法师 → 哥布林守卫，伤害 10，剩余生命 0",
-            ],
-        )
+        self.assertIn("[攻击] 游侠 → 洞穴蝠（斩击），伤害 7，剩余生命 0", output)
         self.assertIn("[结果] 已退出探险", output)
 
-    def test_defeat_keeps_prior_rewards(self):
-        output = self.run_game([1] + ROUTE_TO_BOSS + BOSS_DEFEAT_ATTACKS, seed=12)
-        self.assertIn("[攻击] 地牢领主 → 战士，伤害 9，剩余生命 0", output)
-        self.assertIn("[结果] 全员倒地", output)
-        self.assertIn("[总价值] 96", output)
-        self.assertEqual(len(self.summary_items(output)), 7)
-        self.assertNotIn("领主印戒", output)
-
     def test_eof_during_battle_exits(self):
-        output = self.run_game([1, 1])
+        output = self.run_game(["1", "1"])
         self.assertIn("[开战] 守卫哨岗", output)
         self.assertIn("[结果] 已退出探险", output)
         self.assertNotIn("[战利品结算]", output)

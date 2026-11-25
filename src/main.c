@@ -85,19 +85,30 @@ static CombatResult run_battle(Party *party, const DungeonArea *area, uint32_t *
     printf("[开战] %s\n", area->name);
     fputs("[先攻]", stdout);
     for (size_t index = 0; index < combat.turn_count; ++index) {
-        Initiative turn = combat.turn_order[index];
-        const Character *actor = combat_actor(&combat, turn.actor_id);
-        printf(" %s(%d)", actor->name, turn.score);
+        const Character *actor = combat_actor(&combat, combat.turn_order[index]);
+        printf(" %s(速度 %d)", actor->name, actor->speed);
     }
     putchar('\n');
 
     CombatResult result;
     while ((result = combat_result(&combat)) == COMBAT_ACTIVE) {
-        size_t actor_id = combat.turn_order[combat.turn_index].actor_id;
+        size_t actor_id = combat.turn_order[combat.turn_index];
         const Character *actor = combat_actor(&combat, actor_id);
         size_t target_id;
         if (actor_id < PARTY_SIZE) {
             printf("轮到%s行动。\n", actor->name);
+            for (;;) {
+                puts("  1. 普通攻击");
+                puts("  2. 法术");
+                int action = read_choice("行动方式 > ", 1, 2, -1);
+                if (action < 0) {
+                    return COMBAT_ACTIVE;
+                }
+                if (action == 1) {
+                    break;
+                }
+                puts("暂时没有可用的技能。");
+            }
             int choice = choose_attack_target(&combat);
             if (choice < 0) {
                 return COMBAT_ACTIVE;
@@ -106,10 +117,19 @@ static CombatResult run_battle(Party *party, const DungeonArea *area, uint32_t *
         } else {
             target_id = combat_monster_target(&combat);
         }
-        const Character *target = combat_actor(&combat, target_id);
-        combat_attack(&combat, target_id);
-        printf("\n[攻击] %s → %s，伤害 %d，剩余生命 %d\n",
-               actor->name, target->name, actor->attack, target->hp);
+        Character *target = combat_actor(&combat, target_id);
+        AttackResult attack = combat_attack(&combat, target_id);
+        printf("\n[攻击] %s → %s（%s），伤害 %d，剩余生命 %d\n",
+               actor->name, target->name, damage_type_text(attack.type),
+               attack.damage, target->hp);
+        if (attack.recoil > 0) {
+            printf("[反噬] %s 受到 %d 点伤害，剩余生命 %d\n",
+                   actor->name, attack.recoil, actor->hp);
+        }
+        if (attack.reflected > 0) {
+            printf("[反弹] %s 受到 %d 点法术伤害，剩余生命 %d\n",
+                   actor->name, attack.reflected, actor->hp);
+        }
     }
     return result;
 }
@@ -260,12 +280,16 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
     }
 
-    Party party = {.members = {
-        {"战士", 28, 9, 1},
-        {"游侠", 23, 8, 3},
-        {"法师", 20, 10, 2}
-    }};
+    Party party;
+    if (!party_init(&party)) {
+        fputs("角色属性超出 0-99 的范围。\n", stderr);
+        return EXIT_FAILURE;
+    }
     const Dungeon *map = dungeon_map();
+    if (!dungeon_validate(map)) {
+        fputs("地下城里的怪物属性超出 0-99 的范围。\n", stderr);
+        return EXIT_FAILURE;
+    }
     LootLedger ledger;
     if (!loot_init(&ledger, (LootMode)mode, dungeon_loot_capacity(map))) {
         fputs("无法分配战利品记录所需的内存。\n", stderr);
