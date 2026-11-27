@@ -1,18 +1,50 @@
 #include "dungeon.h"
 
+#include <string.h>
+
 #define ARRAY_LENGTH(array) (sizeof(array) / sizeof((array)[0]))
 
 static const Character guard_monsters[] = {
-    {"哥布林守卫", 14, 4, 2},
-    {"洞穴蝠", 7, 3, 4}
+    {
+        .name = "哥布林守卫", .job = JOB_MONSTER, .damage_type = DAMAGE_BLUNT,
+        .hp = 14, .sp = 0, .defense = 2, .magic_resist = 1,
+        .strength = 4, .speed = 4, .magic = 0, .luck = 10,
+        .reputation = 0, .skills = NULL, .skill_count = 0
+    },
+    {
+        .name = "洞穴蝠", .job = JOB_MONSTER, .damage_type = DAMAGE_SLASH,
+        .hp = 7, .sp = 0, .defense = 1, .magic_resist = 0,
+        .strength = 3, .speed = 9, .magic = 0, .luck = 25,
+        .reputation = 0, .skills = NULL, .skill_count = 0
+    }
 };
 static const Character hall_monsters[] = {
-    {"骷髅哨兵", 18, 5, 1},
-    {"石像鬼", 11, 4, 2}
+    {
+        .name = "骷髅哨兵", .job = JOB_MONSTER, .damage_type = DAMAGE_SLASH,
+        .hp = 18, .sp = 0, .defense = 3, .magic_resist = 2,
+        .strength = 5, .speed = 3, .magic = 0, .luck = 5,
+        .reputation = 0, .skills = NULL, .skill_count = 0
+    },
+    {
+        .name = "石像鬼", .job = JOB_MONSTER, .damage_type = DAMAGE_BLUNT,
+        .hp = 11, .sp = 0, .defense = 5, .magic_resist = 3,
+        .strength = 4, .speed = 5, .magic = 0, .luck = 10,
+        .reputation = 0, .skills = NULL, .skill_count = 0
+    }
 };
 static const Character boss_monsters[] = {
-    {"地牢领主", 38, 9, 2},
-    {"影侍", 11, 6, 4}
+    {
+        .name = "地牢领主", .job = JOB_MONSTER, .damage_type = DAMAGE_BLUNT,
+        .hp = 38, .sp = 0, .defense = 4, .magic_resist = 5,
+        .strength = 13, .speed = 7, .magic = 0, .luck = 20,
+        .reputation = 0, .skills = NULL, .skill_count = 0
+    },
+    {
+        .name = "影侍", .job = JOB_MONSTER, .damage_type = DAMAGE_SLASH,
+        .hp = 11, .sp = 0, .defense = 3, .magic_resist = 4,
+        .strength = 6, .speed = 11, .magic = 0, .luck = 35,
+        .reputation = 0, .skills = NULL, .skill_count = 0
+    }
 };
 
 _Static_assert(ARRAY_LENGTH(guard_monsters) <= MAX_MONSTERS, "too many guard monsters");
@@ -115,6 +147,84 @@ const Dungeon *dungeon_map(void)
 const DungeonLinks *dungeon_links(const DungeonRoom *room)
 {
     return &links[room->id];
+}
+
+const DungeonRoom *dungeon_room(size_t room_id)
+{
+    const Dungeon *map = dungeon_map();
+    for (size_t floor_index = 0; floor_index < map->floor_count; ++floor_index) {
+        const DungeonFloor *floor = &map->floors[floor_index];
+        for (size_t room_index = 0; room_index < floor->room_count; ++room_index) {
+            if ((size_t)floor->rooms[room_index].id == room_id) {
+                return &floor->rooms[room_index];
+            }
+        }
+    }
+    return &map->floors[0].rooms[0];
+}
+
+const LootItem *dungeon_find_loot(const char *name)
+{
+    const Dungeon *map = dungeon_map();
+    for (size_t floor_index = 0; floor_index < map->floor_count; ++floor_index) {
+        const DungeonFloor *floor = &map->floors[floor_index];
+        for (size_t room_index = 0; room_index < floor->room_count; ++room_index) {
+            const DungeonRoom *room = &floor->rooms[room_index];
+            for (size_t area_index = 0; area_index < room->area_count; ++area_index) {
+                const DungeonArea *area = &room->areas[area_index];
+                for (size_t loot_index = 0; loot_index < area->loot_count; ++loot_index) {
+                    if (strcmp(area->loot[loot_index].name, name) == 0) {
+                        return &area->loot[loot_index];
+                    }
+                }
+            }
+        }
+    }
+    return NULL;
+}
+
+const Character *dungeon_find_monster(const char *name)
+{
+    const Dungeon *map = dungeon_map();
+    for (size_t floor_index = 0; floor_index < map->floor_count; ++floor_index) {
+        const DungeonFloor *floor = &map->floors[floor_index];
+        for (size_t room_index = 0; room_index < floor->room_count; ++room_index) {
+            const DungeonRoom *room = &floor->rooms[room_index];
+            for (size_t area_index = 0; area_index < room->area_count; ++area_index) {
+                const DungeonArea *area = &room->areas[area_index];
+                for (size_t monster_index = 0;
+                     monster_index < area->encounter.count;
+                     ++monster_index) {
+                    const Character *monster = &area->encounter.monsters[monster_index];
+                    if (strcmp(monster->name, name) == 0) {
+                        return monster;
+                    }
+                }
+            }
+        }
+    }
+    return NULL;
+}
+
+bool dungeon_validate(const Dungeon *map)
+{
+    for (size_t floor_index = 0; floor_index < map->floor_count; ++floor_index) {
+        const DungeonFloor *floor = &map->floors[floor_index];
+        for (size_t room_index = 0; room_index < floor->room_count; ++room_index) {
+            const DungeonRoom *room = &floor->rooms[room_index];
+            for (size_t area_index = 0; area_index < room->area_count; ++area_index) {
+                const DungeonArea *area = &room->areas[area_index];
+                for (size_t monster_index = 0;
+                     monster_index < area->encounter.count;
+                     ++monster_index) {
+                    if (!character_stats_valid(&area->encounter.monsters[monster_index])) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    return true;
 }
 
 size_t dungeon_loot_capacity(const Dungeon *map)
