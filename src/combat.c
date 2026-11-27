@@ -113,82 +113,33 @@ static bool luck_wins(Combat *combat, size_t actor_id)
     return percent_roll(combat->random_state) <= luck;
 }
 
-static void sort_ascending(size_t *ids, size_t count)
-{
-    for (size_t index = 1; index < count; ++index) {
-        size_t current = ids[index];
-        size_t position = index;
-        while (position > 0 && ids[position - 1] > current) {
-            ids[position] = ids[position - 1];
-            --position;
-        }
-        ids[position] = current;
-    }
-}
-
-static void sort_by_luck(Combat *combat, size_t *ids, size_t count)
-{
-    for (size_t index = 1; index < count; ++index) {
-        size_t current = ids[index];
-        size_t position = index;
-        int luck = combat_actor(combat, current)->luck;
-        while (position > 0 && combat_actor(combat, ids[position - 1])->luck < luck) {
-            ids[position] = ids[position - 1];
-            --position;
-        }
-        ids[position] = current;
-    }
-}
-
 /*
- * 同速且幸运相同的一组人：同队按编号；跨队时由队员按自己的幸运掷骰，
- * 掷中的队员排在怪物前，掷不中的排在怪物后，怪物本身不掷骰。
+ * 同速同幸运的角色已按编号排列，队员在怪物前。
+ * 跨队时按编号为队员掷骰，将未掷中的队员依次移到怪物后。
  */
 static void order_equal_luck(Combat *combat, size_t *ids, size_t count)
 {
-    bool has_party = false;
-    bool has_monster = false;
-    for (size_t index = 0; index < count; ++index) {
-        if (is_party(ids[index])) {
-            has_party = true;
-        } else {
-            has_monster = true;
-        }
-    }
-    if (!(has_party && has_monster)) {
-        sort_ascending(ids, count);
+    if (!is_party(ids[0]) || is_party(ids[count - 1])) {
         return;
     }
 
-    size_t winners[MAX_COMBATANTS];
-    size_t monsters[MAX_COMBATANTS];
-    size_t losers[MAX_COMBATANTS];
-    size_t winner_count = 0;
-    size_t monster_count = 0;
+    size_t losers[PARTY_SIZE];
     size_t loser_count = 0;
-    for (size_t index = 0; index < count; ++index) {
-        size_t actor_id = ids[index];
-        if (!is_party(actor_id)) {
-            monsters[monster_count++] = actor_id;
-        } else if (luck_wins(combat, actor_id)) {
-            winners[winner_count++] = actor_id;
+    size_t read_index = 0;
+    size_t write_index = 0;
+    while (read_index < count && is_party(ids[read_index])) {
+        size_t actor_id = ids[read_index++];
+        if (luck_wins(combat, actor_id)) {
+            ids[write_index++] = actor_id;
         } else {
             losers[loser_count++] = actor_id;
         }
     }
-    sort_ascending(winners, winner_count);
-    sort_ascending(monsters, monster_count);
-    sort_ascending(losers, loser_count);
-
-    size_t out = 0;
-    for (size_t index = 0; index < winner_count; ++index) {
-        ids[out++] = winners[index];
-    }
-    for (size_t index = 0; index < monster_count; ++index) {
-        ids[out++] = monsters[index];
+    while (read_index < count) {
+        ids[write_index++] = ids[read_index++];
     }
     for (size_t index = 0; index < loser_count; ++index) {
-        ids[out++] = losers[index];
+        ids[write_index++] = losers[index];
     }
 }
 
@@ -257,7 +208,7 @@ static void build_turn_order(Combat *combat)
         }
     }
 
-    size_t ids[MAX_COMBATANTS];
+    size_t *ids = combat->turn_order;
     size_t count = 0;
     while (heap.count > 0) {
         ids[count++] = heap_pop(combat, &heap);
@@ -266,30 +217,20 @@ static void build_turn_order(Combat *combat)
     size_t start = 0;
     while (start < count) {
         size_t end = start + 1;
-        int speed = combat_actor(combat, ids[start])->speed;
-        while (end < count && combat_actor(combat, ids[end])->speed == speed) {
+        const Character *first = combat_actor(combat, ids[start]);
+        while (end < count) {
+            const Character *next = combat_actor(combat, ids[end]);
+            if (next->speed != first->speed || next->luck != first->luck) {
+                break;
+            }
             ++end;
         }
-        sort_by_luck(combat, ids + start, end - start);
-
-        size_t inner = 0;
-        while (inner < end - start) {
-            size_t same = inner + 1;
-            int luck = combat_actor(combat, ids[start + inner])->luck;
-            while (same < end - start && combat_actor(combat, ids[start + same])->luck == luck) {
-                ++same;
-            }
-            order_equal_luck(combat, ids + start + inner, same - inner);
-            inner = same;
-        }
+        order_equal_luck(combat, ids + start, end - start);
         start = end;
     }
 
     combat->turn_count = count;
     combat->turn_index = 0;
-    for (size_t index = 0; index < count; ++index) {
-        combat->turn_order[index] = ids[index];
-    }
 }
 
 void combat_start(Combat *combat, Party *party, const Encounter *encounter,

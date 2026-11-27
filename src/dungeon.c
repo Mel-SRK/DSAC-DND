@@ -151,16 +151,7 @@ const DungeonLinks *dungeon_links(const DungeonRoom *room)
 
 const DungeonRoom *dungeon_room(size_t room_id)
 {
-    const Dungeon *map = dungeon_map();
-    for (size_t floor_index = 0; floor_index < map->floor_count; ++floor_index) {
-        const DungeonFloor *floor = &map->floors[floor_index];
-        for (size_t room_index = 0; room_index < floor->room_count; ++room_index) {
-            if ((size_t)floor->rooms[room_index].id == room_id) {
-                return &floor->rooms[room_index];
-            }
-        }
-    }
-    return &map->floors[0].rooms[0];
+    return &rooms[room_id < ROOM_COUNT ? room_id : ROOM_ENTRY];
 }
 
 const LootItem *dungeon_find_loot(const char *name)

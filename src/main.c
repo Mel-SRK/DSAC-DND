@@ -190,15 +190,18 @@ static void print_loot_entry(const char *label, const LootItem *item)
 
 static bool collect_reward(LootLedger *ledger, const DungeonArea *area)
 {
-    size_t first = ledger->count;
-    if (!loot_collect(ledger, area->loot, area->loot_count)) {
-        fputs("战利品记录容量不足。\n", stderr);
-        return false;
+    if (loot_collect(ledger, area->loot, area->loot_count)) {
+        return true;
     }
+    fputs("战利品记录容量不足。\n", stderr);
+    return false;
+}
+
+static void show_new_rewards(const LootLedger *ledger, size_t first)
+{
     for (size_t index = first; index < ledger->count; ++index) {
         print_loot_entry("获得", &ledger->items[index]);
     }
-    return true;
 }
 
 static void show_room(const DungeonRoom *room, const Party *party)
@@ -343,16 +346,19 @@ static GameResult explore(GameState *game)
                 if (result == COMBAT_DEFEAT) {
                     return GAME_DEFEAT;
                 }
-                printf("[清理] %s\n", room->name);
+                size_t previous_loot_count = game->ledger.count;
                 if (!collect_reward(&game->ledger, area)) {
                     return GAME_ERROR;
                 }
                 state->cleared = true;
-                if (room->id == ROOM_BOSS) {
-                    return GAME_VICTORY;
-                }
-                if (!write_checkpoint(game)) {
+                bool boss_defeated = room->id == ROOM_BOSS;
+                if (!boss_defeated && !write_checkpoint(game)) {
                     return GAME_ERROR;
+                }
+                printf("[清理] %s\n", room->name);
+                show_new_rewards(&game->ledger, previous_loot_count);
+                if (boss_defeated) {
+                    return GAME_VICTORY;
                 }
             }
             if (area->kind == AREA_CHEST && !state->chest_opened) {
@@ -381,6 +387,7 @@ static GameResult explore(GameState *game)
             return GAME_QUIT;
         }
         putchar('\n');
+        size_t previous_loot_count = game->ledger.count;
         if (chest != NULL && choice == chest_choice) {
             if (!collect_reward(&game->ledger, chest)) {
                 return GAME_ERROR;
@@ -397,6 +404,7 @@ static GameResult explore(GameState *game)
         if (!write_checkpoint(game)) {
             return GAME_ERROR;
         }
+        show_new_rewards(&game->ledger, previous_loot_count);
     }
 }
 
@@ -520,6 +528,19 @@ int main(int argc, char *argv[])
         } else {
             if (has_save) {
                 loot_destroy(&saved.ledger);
+            }
+            if (has_save || save_exists()) {
+                puts("\n开始新探险会覆盖现有存档。");
+                print_option("  1. 确认开始\n");
+                print_option("  0. 返回标题（默认）\n");
+                putchar('\n');
+                int confirmation = read_choice("覆盖存档 > ", 0, 1, 0);
+                if (confirmation < 0) {
+                    break;
+                }
+                if (confirmation == 0) {
+                    continue;
+                }
             }
             if (!new_game(&game, seed)) {
                 loot_destroy(&game.ledger);

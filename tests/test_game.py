@@ -3,6 +3,7 @@ import subprocess
 import sys
 import time
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -42,7 +43,8 @@ class GameTests(unittest.TestCase):
             self.assertRegex(result.stderr, error_pattern)
         return result.stdout
 
-    def interrupt_at_exploration_prompt(self, choices, marker):
+    @contextmanager
+    def game_at_prompt(self, choices, marker, prompt):
         log_path = self.work / "game.log"
         with log_path.open("wb") as log, subprocess.Popen(
             [str(self.binary), "--seed", "0"],
@@ -58,14 +60,16 @@ class GameTests(unittest.TestCase):
                 deadline = time.monotonic() + 10
                 while True:
                     output = log_path.read_text(encoding="utf-8", errors="replace")
-                    if marker in output and output.endswith("探索操作 > "):
+                    if marker in output and output.endswith(prompt):
                         break
                     if process.poll() is not None or time.monotonic() >= deadline:
-                        self.fail(f"未到达探索菜单 {marker!r}\n{output}")
+                        self.fail(f"未到达 {marker!r} 后的提示 {prompt!r}\n{output}")
                     time.sleep(0.01)
+                yield process, log_path
             finally:
-                process.kill()
-                process.wait(timeout=10)
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=10)
 
     def summary_items(self, output):
         return {
@@ -142,6 +146,30 @@ class GameTests(unittest.TestCase):
         self.assertIn("[地点] 第 1 层 · 入口", resumed)
         self.assertIn("小队生命  战士 28  游侠 23  法师 20", resumed)
 
+    def test_new_game_only_replaces_save_after_confirmation(self):
+        self.run_game(START_AND_CLEAR_GUARD)
+        original = self.save.read_bytes()
+
+        for choices in (["1"], ["1", "", "0"], ["1", "0", "0"]):
+            with self.subTest(choices=choices):
+                cancelled = self.run_game(choices)
+                self.assertIn("开始新探险会覆盖现有存档。", cancelled)
+                self.assertNotIn("[地点]", cancelled)
+                self.assertEqual(self.save.read_bytes(), original)
+
+        restarted = self.run_game(["1", "1"])
+        self.assertIn("[地点] 第 1 层 · 入口", restarted)
+        self.assertIn("小队生命  战士 28  游侠 23  法师 20", restarted)
+        self.assertIn(b"progress 0 1 1\n", self.save.read_bytes())
+
+    def test_new_game_requires_confirmation_for_unreadable_save(self):
+        original = b"DNDSAVE 99\n"
+        self.save.write_bytes(original)
+
+        cancelled = self.run_game(["1", "0", "0"])
+        self.assertIn("开始新探险会覆盖现有存档。", cancelled)
+        self.assertEqual(self.save.read_bytes(), original)
+
     def test_attack_target_invalid_input_retries(self):
         output = self.run_game(["1", "1", "99", "x" * 300, "2", "2"])
         self.assertIn("[开战] 守卫哨岗", output)
@@ -174,7 +202,8 @@ class GameTests(unittest.TestCase):
         self.assertIn("法师对骷髅哨兵造成了99点伤害（死亡）", resumed)
 
     def test_battle_victory_is_saved_before_next_input(self):
-        self.interrupt_at_exploration_prompt(START_AND_CLEAR_GUARD, "[清理] 守卫室")
+        with self.game_at_prompt(START_AND_CLEAR_GUARD, "[清理] 守卫室", "探索操作 > "):
+            pass
 
         resumed = self.run_game(["2"] + FROM_GUARD_TO_BOSS + WINNING_BOSS_TARGETS)
         self.assertIn("[地点] 第 1 层 · 守卫室", resumed)
@@ -184,9 +213,10 @@ class GameTests(unittest.TestCase):
         self.assertIn("[总价值] 171", resumed)
 
     def test_downstairs_progress_is_saved_before_next_input(self):
-        self.interrupt_at_exploration_prompt(
-            START_AND_CLEAR_GUARD + ["3", "2"], "[地点] 第 2 层 · 楼梯间"
-        )
+        with self.game_at_prompt(
+            START_AND_CLEAR_GUARD + ["3", "2"], "[地点] 第 2 层 · 楼梯间", "探索操作 > "
+        ):
+            pass
 
         resumed = self.run_game(["2"])
         title, _, _ = resumed.partition("[地点]")
@@ -196,8 +226,20 @@ class GameTests(unittest.TestCase):
     def test_unwritable_save_reports_error(self):
         self.save.mkdir()
         error = r"(保存|存档).*dnd_save\.txt|dnd_save\.txt.*(保存|存档)"
-        self.run_game(["1"], error_pattern=error)
+        self.run_game(["1", "1"], error_pattern=error)
         self.assertTrue(self.save.is_dir())
+
+    def test_failed_battle_checkpoint_does_not_report_rewards(self):
+        with self.game_at_prompt(["1", "1"], "[开战] 守卫哨岗", "攻击目标 > ") as (process, log):
+            self.save.rename(self.work / "previous_save.txt")
+            self.save.mkdir()
+            process.communicate("".join(f"{target}\n" for target in GUARD_TARGETS), timeout=10)
+
+            output = log.read_text(encoding="utf-8")
+            self.assertNotEqual(process.returncode, 0, output)
+            self.assertIn("无法保存存档 dnd_save.txt。", output)
+            self.assertNotIn("[清理]", output)
+            self.assertNotIn("[获得]", output)
 
     def test_legacy_crlf_save_restores_progress(self):
         content = (
