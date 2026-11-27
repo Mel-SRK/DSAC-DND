@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "dungeon.h"
 
@@ -26,13 +27,14 @@ typedef struct {
     size_t room_id;
     int floor_number;
     int max_floor;
+    uint32_t random_state;
     LootLedger ledger;
     Bestiary bestiary;
 } GameState;
 
 bool save_exists(void);
 bool save_write(const GameState *game);
-bool save_read(GameState *game);
-void save_clear(void);
+bool save_read(GameState *game, uint32_t fallback_random_state);
+bool save_clear(void);
 
 #endif

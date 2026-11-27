@@ -36,7 +36,7 @@ static const Character boss_monsters[] = {
     {
         .name = "地牢领主", .job = JOB_MONSTER, .damage_type = DAMAGE_BLUNT,
         .hp = 38, .sp = 0, .defense = 4, .magic_resist = 5,
-        .strength = 9, .speed = 7, .magic = 0, .luck = 20,
+        .strength = 13, .speed = 7, .magic = 0, .luck = 20,
         .reputation = 0, .skills = NULL, .skill_count = 0
     },
     {
@@ -155,7 +155,7 @@ const DungeonRoom *dungeon_room(size_t room_id)
     for (size_t floor_index = 0; floor_index < map->floor_count; ++floor_index) {
         const DungeonFloor *floor = &map->floors[floor_index];
         for (size_t room_index = 0; room_index < floor->room_count; ++room_index) {
-            if (floor->rooms[room_index].id == room_id) {
+            if ((size_t)floor->rooms[room_index].id == room_id) {
                 return &floor->rooms[room_index];
             }
         }

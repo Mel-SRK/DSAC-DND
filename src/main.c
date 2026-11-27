@@ -233,14 +233,13 @@ static int choose_attack_target(const Combat *combat)
     }
 }
 
-static CombatResult run_battle(Party *party, const DungeonArea *area, uint32_t *random_state,
-                               Bestiary *bestiary)
+static CombatResult run_battle(GameState *game, const DungeonArea *area)
 {
     Combat combat;
     for (size_t index = 0; index < area->encounter.count; ++index) {
-        bestiary_record(bestiary, &area->encounter.monsters[index]);
+        bestiary_record(&game->bestiary, &area->encounter.monsters[index]);
     }
-    combat_start(&combat, party, &area->encounter, random_state);
+    combat_start(&combat, &game->party, &area->encounter, &game->random_state);
     printf("[开战] %s\n", area->name);
     fputs("[先攻]", stdout);
     for (size_t index = 0; index < combat.turn_count; ++index) {
@@ -256,20 +255,6 @@ static CombatResult run_battle(Party *party, const DungeonArea *area, uint32_t *
         size_t target_id;
         if (actor_id < PARTY_SIZE) {
             printf("轮到%s行动。\n", actor->name);
-            for (;;) {
-                putchar('\n');
-                print_option("  1. 普通攻击\n");
-                print_option("  2. 法术\n");
-                putchar('\n');
-                int action = read_choice("行动方式 > ", 1, 2, -1);
-                if (action < 0) {
-                    return COMBAT_ACTIVE;
-                }
-                if (action == 1) {
-                    break;
-                }
-                puts("暂时没有可用的技能。");
-            }
             int choice = choose_attack_target(&combat);
             if (choice < 0) {
                 return COMBAT_ACTIVE;
@@ -321,39 +306,53 @@ static bool run_settings(GameState *game)
     }
 }
 
-static GameResult explore(GameState *game, uint32_t *random_state)
+static bool write_checkpoint(const GameState *game)
+{
+    if (save_write(game)) {
+        return true;
+    }
+    fputs("无法保存存档 dnd_save.txt。\n", stderr);
+    return false;
+}
+
+static void enter_room(GameState *game, const DungeonRoom *room)
+{
+    game->room_id = room->id;
+    game->floor_number = room->floor_number;
+    if (room->floor_number > game->max_floor) {
+        game->max_floor = room->floor_number;
+    }
+}
+
+static GameResult explore(GameState *game)
 {
     for (;;) {
         const DungeonRoom *room = dungeon_room(game->room_id);
         RoomState *state = &game->rooms[room->id];
-        game->floor_number = room->floor_number;
-        if (room->floor_number > game->max_floor) {
-            game->max_floor = room->floor_number;
-        }
 
         const DungeonArea *chest = NULL;
         show_room(room, &game->party);
         for (size_t index = 0; index < room->area_count; ++index) {
             const DungeonArea *area = &room->areas[index];
             if (area->kind == AREA_ENCOUNTER && !state->cleared) {
-                CombatResult result = run_battle(&game->party, area, random_state,
-                                                 &game->bestiary);
+                CombatResult result = run_battle(game, area);
                 if (result == COMBAT_ACTIVE) {
-                    save_write(game);
+                    // 保留完整的战前检查点，下次继续时重打这场战斗。
                     return GAME_QUIT;
                 }
                 if (result == COMBAT_DEFEAT) {
-                    save_clear();
                     return GAME_DEFEAT;
                 }
-                state->cleared = true;
                 printf("[清理] %s\n", room->name);
                 if (!collect_reward(&game->ledger, area)) {
                     return GAME_ERROR;
                 }
+                state->cleared = true;
                 if (room->id == ROOM_BOSS) {
-                    save_clear();
                     return GAME_VICTORY;
+                }
+                if (!write_checkpoint(game)) {
+                    return GAME_ERROR;
                 }
             }
             if (area->kind == AREA_CHEST && !state->chest_opened) {
@@ -379,7 +378,6 @@ static GameResult explore(GameState *game, uint32_t *random_state)
         putchar('\n');
         int choice = read_choice("探索操作 > ", 1, choice_count, -1);
         if (choice < 0) {
-            save_write(game);
             return GAME_QUIT;
         }
         putchar('\n');
@@ -390,13 +388,15 @@ static GameResult explore(GameState *game, uint32_t *random_state)
             state->chest_opened = true;
         } else if (choice == settings_choice) {
             if (run_settings(game)) {
-                save_write(game);
                 return GAME_QUIT;
             }
+            continue;
         } else {
-            game->room_id = exits->rooms[choice - 1]->id;
+            enter_room(game, exits->rooms[choice - 1]);
         }
-        save_write(game);
+        if (!write_checkpoint(game)) {
+            return GAME_ERROR;
+        }
     }
 }
 
@@ -411,15 +411,17 @@ static void show_summary(LootLedger *ledger, GameResult result)
     printf("[总价值] %d\n", ledger->total);
 }
 
-static void new_game(GameState *game)
+static bool new_game(GameState *game, uint32_t seed)
 {
     memset(game, 0, sizeof(*game));
-    party_init(&game->party);
-    loot_init(&game->ledger, dungeon_loot_capacity(dungeon_map()));
-    game->room_id = ROOM_ENTRY;
-    game->floor_number = 1;
-    game->max_floor = 1;
-    save_write(game);
+    if (!party_init(&game->party) ||
+        !loot_init(&game->ledger, dungeon_loot_capacity(dungeon_map()))) {
+        fputs("无法初始化探险。\n", stderr);
+        return false;
+    }
+    game->random_state = seed;
+    enter_room(game, dungeon_room(ROOM_ENTRY));
+    return write_checkpoint(game);
 }
 
 static void draw_title(bool has_save, int floor_number, int max_floor)
@@ -483,7 +485,7 @@ int main(int argc, char *argv[])
 
     for (;;) {
         GameState saved;
-        bool has_save = save_read(&saved);
+        bool has_save = save_read(&saved, seed);
         draw_title(has_save, has_save ? saved.floor_number : 0,
                    has_save ? saved.max_floor : 0);
         int choice = read_choice("请选择 > ", 0, 4, -1);
@@ -508,7 +510,7 @@ int main(int argc, char *argv[])
             continue;
         }
         if (choice == 2 && !has_save) {
-            puts("没有可以继续的存档。");
+            puts(save_exists() ? "无法读取存档 dnd_save.txt。" : "没有可以继续的存档。");
             continue;
         }
 
@@ -519,11 +521,20 @@ int main(int argc, char *argv[])
             if (has_save) {
                 loot_destroy(&saved.ledger);
             }
-            new_game(&game);
+            if (!new_game(&game, seed)) {
+                loot_destroy(&game.ledger);
+                return EXIT_FAILURE;
+            }
         }
-        GameResult result = explore(&game, &seed);
+        GameResult result = explore(&game);
+        seed = game.random_state;
         if (result == GAME_VICTORY || result == GAME_DEFEAT) {
+            bool cleared = save_clear();
             show_summary(&game.ledger, result);
+            if (!cleared) {
+                fputs("无法清除存档 dnd_save.txt。\n", stderr);
+                result = GAME_ERROR;
+            }
         } else if (result == GAME_QUIT) {
             puts("\n[结果] 已退出探险");
         }

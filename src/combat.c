@@ -347,7 +347,7 @@ AttackResult combat_attack(Combat *combat, size_t target_id)
     Character *actor = combat_actor(combat, actor_id);
     Character *target = combat_actor(combat, target_id);
     AttackResult result = {.type = actor->damage_type};
-    int power = actor->strength;
+    int power = result.type == DAMAGE_SPELL ? actor->magic : actor->strength;
 
     if (actor->job == JOB_MAGE) {
         result.type = roll_mage_attack(combat, actor_id, &power);
